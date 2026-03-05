@@ -126,6 +126,7 @@ class Run:
         instrument,
         experiment_number,
         number_of_static_samples=11,
+        target="single_delay",
         target_id=0,
         q_min=9,
         q_max=9.5,
@@ -169,6 +170,7 @@ class Run:
         self.azimuthal_selector = azimuthal_selector
 
         # --- store setup parameters ---
+        self.target = target
         self.target_id = target_id
         self.q_min = q_min
         self.q_max = q_max
@@ -649,8 +651,18 @@ class Run:
         """Apply diffpy.morph to each delay and store results in
         morph_delays."""
         params = self.morph_params
-        target = self.raw_delays[self.target_delay]
-        target_table = np.column_stack([target[0], target[1]])
+        if self.target == "single_delay":
+            target = self.raw_delays[self.target_delay]
+            target_table = np.column_stack([target[0], target[1]])
+        elif self.target == "average_off":
+            offs = []
+            for data in self.raw_delays.values():
+                offs.append(data[2])
+            x_target = self.raw_delays[self.target_delay][0]
+            y_target = np.nanmean(offs, axis=0)
+            target_table = np.column_stack([x_target, y_target])
+        else:
+            print("target must be 'single_delay' or 'average_off'")
 
         self.morph_parameters = {}
         self.morphed_delay_scans = {}

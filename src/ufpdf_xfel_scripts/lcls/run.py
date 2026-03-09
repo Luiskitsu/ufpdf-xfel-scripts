@@ -126,8 +126,7 @@ class Run:
         instrument,
         experiment_number,
         number_of_static_samples=11,
-        target="single_delay",
-        target_id=0,
+        target_delays=None,
         q_min=9,
         q_max=9.5,
         r_min_fom=2,
@@ -170,8 +169,7 @@ class Run:
         self.azimuthal_selector = azimuthal_selector
 
         # --- store setup parameters ---
-        self.target = target
-        self.target_id = target_id
+        self.target_delays = target_delays
         self.q_min = q_min
         self.q_max = q_max
         self.pdf_rmin = pdf_rmin
@@ -251,6 +249,34 @@ class Run:
         integrand = fq[:, None] * np.sin(qr)
         gr = (2 / np.pi) * np.trapezoid(integrand, q, axis=0)
         return r, gr
+
+    def _build_target_table(self):
+        """Construct morph target by averaging selected delays."""
+        allowed_delays = list(self.raw_delays.keys())
+        rounded_delays = np.round(allowed_delays, 1)
+        delay_map = dict(zip(rounded_delays, allowed_delays))
+        if self.target_delays is None:
+            target_delays = [allowed_delays[0]]
+        else:
+            target_delays = []
+            for requested_delay in self.target_delays:
+                requested_delay = round(requested_delay, 1)
+                if requested_delay not in delay_map:
+                    raise ValueError(
+                        f"The target-delay list contains invalid delays"
+                        f"[{requested_delay}]."
+                        f"Please specify delays with one decimal from"
+                        f"{sorted(delay_map.keys())}"
+                    )
+                target_delays.append(delay_map[requested_delay])
+
+        q_target = self.raw_delays[target_delays[0]][0]
+        y_target_off = []
+        for delay in target_delays:
+            delay_data = self.raw_delays[delay]
+            y_target_off.append(delay_data[2])  # OFF signal
+        y_target_average = np.nanmean(y_target_off, axis=0)
+        return np.column_stack([q_target, y_target_average])
 
     def _average_equal_times(self):
         # average repeated delays
@@ -332,7 +358,7 @@ class Run:
             )
 
     def _morph_fq(self):
-        reference_delay = self.delays[self.target_id]
+        reference_delay = list(self.raw_delays.keys())[0]
 
         x_morph = self.morphed_delay_scans[reference_delay][0]
         y_morph = self.morphed_delay_scans[reference_delay][2]
@@ -513,10 +539,8 @@ class Run:
             )  # true if scan exists in the dataset, false otherwise
             if self.delay_scan:
                 delays = f["scan"][self.delay_motor][:].squeeze() * 1e12
-                self.target_delay = delays[self.target_id]
             else:
                 delays = None  # filled below
-                self.target_delay = None
 
             laser_mask = f["lightStatus"]["laser"][:].astype(bool)
             xray_mask = f["lightStatus"]["xray"][:].astype(bool)
@@ -651,19 +675,7 @@ class Run:
         """Apply diffpy.morph to each delay and store results in
         morph_delays."""
         params = self.morph_params
-        if self.target == "single_delay":
-            target = self.raw_delays[self.target_delay]
-            target_table = np.column_stack([target[0], target[1]])
-        elif self.target == "average_off":
-            offs = []
-            for data in self.raw_delays.values():
-                offs.append(data[2])
-            x_target = self.raw_delays[self.target_delay][0]
-            y_target = np.nanmean(offs, axis=0)
-            target_table = np.column_stack([x_target, y_target])
-        else:
-            print("target must be 'single_delay' or 'average_off'")
-
+        target_table = self._build_target_table()
         self.morph_parameters = {}
         self.morphed_delay_scans = {}
         for delay_t, data in self.raw_delays.items():

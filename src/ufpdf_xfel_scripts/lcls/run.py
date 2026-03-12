@@ -98,8 +98,6 @@ class Run:
         Delay-averaged, sorted pump-ON I(Q) (shape (n_delays, n_q)).
     Is_off : np.ndarray
         Delay-averaged, sorted pump-OFF I(Q) (shape (n_delays, n_q)).
-    target_delay : float
-        The delay value used as the morph target.
     raw_delays : dict
         Dict keyed by delay time containing raw [q, on, off, diff, ...] lists.
     morph_delays : dict
@@ -111,6 +109,10 @@ class Run:
         Q-grid from the synchrotron reference file.
     fq_synchrotron : np.ndarray
         F(Q) from the synchrotron reference file.
+    target_delay_indices_off : list
+        List of pump-off delay indices used as the morph target
+    target_delay_indices_on : list
+        List of pump-on delay indices used as the morph target
     """
 
     # ------------------------------------------------------------------
@@ -126,7 +128,8 @@ class Run:
         instrument,
         experiment_number,
         number_of_static_samples=11,
-        target_delays=None,
+        target_delay_indices_off=None,
+        target_delay_indices_on=None,
         q_min=9,
         q_max=9.5,
         r_min_fom=2,
@@ -169,7 +172,8 @@ class Run:
         self.azimuthal_selector = azimuthal_selector
 
         # --- store setup parameters ---
-        self.target_delays = target_delays
+        self.target_delay_indices_off = target_delay_indices_off
+        self.target_delay_indices_on = target_delay_indices_on
         self.q_min = q_min
         self.q_max = q_max
         self.pdf_rmin = pdf_rmin
@@ -250,32 +254,55 @@ class Run:
         gr = (2 / np.pi) * np.trapezoid(integrand, q, axis=0)
         return r, gr
 
+    def _print_delay_table(self):
+        """Print table mapping delay index to delay value."""
+        print("\nDelay index table")
+        print("-----------------")
+        for index, delay in enumerate(self.unique_delays):
+            print(f"{index:3d}  ->  {delay:8.3f} ps")
+
     def _build_target_table(self):
         """Construct morph target by averaging selected delays."""
         allowed_delays = list(self.raw_delays.keys())
-        rounded_delays = np.round(allowed_delays, 1)
-        delay_map = dict(zip(rounded_delays, allowed_delays))
-        if self.target_delays is None:
-            target_delays = [allowed_delays[0]]
+        # off indices
+        if self.target_delay_indices_off is None:
+            off_target_indices = [0]
         else:
-            target_delays = []
-            for requested_delay in self.target_delays:
-                requested_delay = round(requested_delay, 1)
-                if requested_delay not in delay_map:
-                    raise ValueError(
-                        f"The target-delay list contains invalid delays"
-                        f"[{requested_delay}]."
-                        f"Please specify delays with one decimal from"
-                        f"{sorted(delay_map.keys())}"
-                    )
-                target_delays.append(delay_map[requested_delay])
-
-        q_target = self.raw_delays[target_delays[0]][0]
-        y_target_off = []
-        for delay in target_delays:
-            delay_data = self.raw_delays[delay]
-            y_target_off.append(delay_data[2])  # OFF signal
-        y_target_average = np.nanmean(y_target_off, axis=0)
+            off_target_indices = self.target_delay_indices_off
+        # on indices
+        if self.target_delay_indices_on is None:
+            on_target_indices = []
+        else:
+            on_target_indices = self.target_delay_indices_on
+        max_index = len(allowed_delays) - 1
+        for index in off_target_indices + on_target_indices:
+            if index < 0 or index > max_index:
+                raise ValueError(
+                    f"Invalid target delay index {index}"
+                    f"Valid index range is 0 to {max_index}"
+                )
+        # warn if on delays ≥ 0 ps are used in morph target
+        on_selected_delays = [allowed_delays[idx] for idx in on_target_indices]
+        positive_on_delays = [
+            delay for delay in on_selected_delays if delay >= 0
+        ]
+        if len(positive_on_delays) > 0:
+            print(
+                "WARNING: ON list used in morph target include delays ≥ 0 ps "
+                f"({positive_on_delays}). These may contain pump-induced "
+                "changes and bias the morph target."
+            )
+        q_target = self.raw_delays[allowed_delays[0]][0]
+        y_target = []
+        for index in off_target_indices:
+            delay = allowed_delays[index]
+            y_target.append(self.raw_delays[delay][2])  # OFF signal
+        for index in on_target_indices:
+            delay = allowed_delays[index]
+            y_target.append(self.raw_delays[delay][1])  # ON signal
+        y_target_average = np.nanmean(y_target, axis=0)
+        self.target_q = q_target
+        self.target_off = y_target_average
         return np.column_stack([q_target, y_target_average])
 
     def _average_equal_times(self):
@@ -358,10 +385,8 @@ class Run:
             )
 
     def _morph_fq(self):
-        reference_delay = list(self.raw_delays.keys())[0]
-
-        x_morph = self.morphed_delay_scans[reference_delay][0]
-        y_morph = self.morphed_delay_scans[reference_delay][2]
+        x_morph = self.target_q
+        y_morph = self.target_off
         x_target = self.q_synchrotron
         y_target = self.fq_synchrotron
 
@@ -670,6 +695,7 @@ class Run:
             ) = self._sample_evenly(self.delays, self.number_of_static_samples)
         else:
             self._average_equal_times()
+            self._print_delay_table()
 
     def _morph(self):
         """Apply diffpy.morph to each delay and store results in

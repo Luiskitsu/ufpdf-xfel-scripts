@@ -564,18 +564,13 @@ def plot_time_resolved_window_map(
 
     fig, ax = plt.subplots(figsize=(9, 6))
 
-    extent = [
-        centers[0],
-        centers[-1],
-        delay_times[0],
-        delay_times[-1],
-    ]
+    X, Y = np.meshgrid(centers, delay_times)
 
-    im = ax.imshow(
+    im = ax.pcolormesh(
+        X,
+        Y,
         FOM_map,
-        aspect="auto",
-        extent=extent,
-        origin="lower",
+        shading="auto",
         cmap="viridis",
     )
 

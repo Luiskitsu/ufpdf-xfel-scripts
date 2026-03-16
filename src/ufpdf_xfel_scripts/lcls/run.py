@@ -542,6 +542,8 @@ class Run:
         # filter 1: monitor2 (diode)
         if self.i0_percentile_threshold is not None:
             self.plt_filter_pre_monitor2 = self.monitor2.copy()
+            if self.timestamp is not None:  # timestamp used in filter 1
+                self.plt_filter_pre_timestamp = self.timestamp.copy()
             if not (0.0 < float(self.i0_percentile_threshold) < 100.0):
                 raise ValueError(
                     "i0_percentile_threshold must be in (0, 100)."
@@ -594,8 +596,6 @@ class Run:
         if float(self.jitter_threshold_fs) <= 0.0:
             raise ValueError("jitter_threshold_fs must be > 0 or None.")
         self.plt_filter_pre_time = self.time_jitter.copy()
-        if self.timestamp is not None:
-            self.plt_filter_pre_timestamp = self.timestamp.copy()
         jitter_negative_count = int(
             np.sum(self.time_jitter[finite_time_mask] < 0.0)
         )

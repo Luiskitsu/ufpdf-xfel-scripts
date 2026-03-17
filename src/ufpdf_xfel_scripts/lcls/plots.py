@@ -2,6 +2,7 @@ import matplotlib
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Patch
 
 from ufpdf_xfel_scripts.lcls.run import find_nearest
 
@@ -581,10 +582,16 @@ def plot_time_resolved_window_map(
         f"metric={metric}, width={width}, run={run.run_number}"
     )
 
-    plt.colorbar(im, ax=ax, label=metric)
+        ax.set_xlabel(axis_label)
+        ax.set_ylabel("Delay (ps)")
+        ax.set_title(
+            f"{data_label} time-resolved window map\n"
+            f"metric={metric}, width={width}, run={run.run_number}"
+        )
 
-    plt.tight_layout()
-    plt.show()
+        plt.colorbar(im, ax=ax, label=metric)
+        plt.tight_layout()
+        plt.show()
 
 
 def plot_morph_parameters(
@@ -696,3 +703,295 @@ def plot_morph_parameters(
 
     plt.tight_layout()
     plt.show()
+
+
+def plot_filter_metrics(run, n_bins=80):
+    """Plot diode (monitor2) and time_jitter distributions with filter
+    results when available.
+
+    Pane 1: diode histogram
+      light blue = Unfiltered Shots
+      red = Filtered Shots (if diode filter applied)
+      dashed lines: mean (black), median (blue), threshold (red)
+
+    Pane 2: timestamp (shifted, s) vs diode scatter
+      green = Unfiltered Shots
+      red = Filtered Shots (if diode filter applied)
+
+    Pane 3: time_jitter histogram
+      light blue = Unfiltered Shots
+      red = Filtered Shots (if time filter applied)
+      dashed red line = threshold cutoff (positive only)
+
+    Parameters
+    ----------
+    run : Run
+        Run object containing:
+          monitor2, time_jitter, timestamp, sample_name, run_number
+        And optional filter plotting state:
+          plt_filter_pre_monitor2, plt_filter_keep_diode,
+          plt_filter_cutoff_diode, plt_filter_pre_time,
+          plt_filter_keep_time, plt_filter_cutoff_time,
+          plt_filter_pre_timestamp.
+
+    n_bins : int
+        Number of bins used for the diode and time_jitter histograms.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The created figure (closed before return).
+    """
+    diode_filter_enabled = hasattr(run, "plt_filter_pre_monitor2") and hasattr(
+        run, "plt_filter_keep_diode"
+    )
+    if diode_filter_enabled:
+        diode_pre = run.plt_filter_pre_monitor2
+        diode_keep = run.plt_filter_keep_diode
+    else:
+        diode_pre = run.monitor2
+        diode_keep = np.ones_like(diode_pre, dtype=bool)
+
+    fig, (ax0, ax1, ax2) = plt.subplots(
+        3, 1, figsize=(9, 13), constrained_layout=True
+    )
+
+    # Pane 1
+    diode_pre_finite = diode_pre[np.isfinite(diode_pre)]
+    if not diode_pre_finite.size:
+        ax0.set_axis_off()
+        ax0.text(
+            0.5,
+            0.5,
+            "No finite monitor2 values",
+            transform=ax0.transAxes,
+            ha="center",
+            va="center",
+        )
+    else:
+        _, diode_edges = np.histogram(diode_pre_finite, bins=int(n_bins))
+        diode_centers = 0.5 * (diode_edges[:-1] + diode_edges[1:])
+        _, _, diode_patches = ax0.hist(
+            diode_pre_finite,
+            bins=diode_edges,
+            edgecolor="black",
+            linewidth=0.8,
+        )
+        for patch in diode_patches:
+            patch.set_facecolor("lightblue")
+        diode_cutoff = getattr(run, "plt_filter_cutoff_diode", None)
+        if diode_filter_enabled:
+            diode_filtered = diode_pre[~diode_keep]
+            diode_filtered = diode_filtered[np.isfinite(diode_filtered)]
+            if diode_filtered.size:
+                bad_bins = np.digitize(diode_filtered, diode_edges) - 1
+                bad_bins = np.clip(bad_bins, 0, len(diode_centers) - 1)
+                for idx in np.unique(bad_bins):
+                    diode_patches[int(idx)].set_facecolor("red")
+        diode_mean = float(np.mean(diode_pre_finite))
+        diode_median = float(np.median(diode_pre_finite))
+        ax0.axvline(diode_mean, linestyle="--", color="black", linewidth=1.2)
+        ax0.axvline(diode_median, linestyle="--", color="blue", linewidth=1.2)
+        if diode_filter_enabled and diode_cutoff is not None:
+            ax0.axvline(
+                float(diode_cutoff),
+                linestyle="--",
+                color="red",
+                linewidth=1.2,
+            )
+        q = getattr(run, "i0_percentile_threshold", None)
+        if diode_filter_enabled and q is not None:
+            thr_pct = f"{float(q):.2f}%"
+        else:
+            thr_pct = "None"
+        ax0.text(
+            0.01,
+            0.93,
+            (
+                f"threshold: {thr_pct}\n"
+                f"mean: {diode_mean:.4g}\n"
+                f"median: {diode_median:.4g}"
+            ),
+            transform=ax0.transAxes,
+            ha="left",
+            va="top",
+            fontsize=10,
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+        )
+        unfiltered_patch = Patch(
+            facecolor="lightblue",
+            edgecolor="black",
+            label="Unfiltered Shots",
+        )
+        filtered_patch = Patch(
+            facecolor="red",
+            edgecolor="black",
+            label="Filtered Shots",
+        )
+        handles = [unfiltered_patch]
+        if diode_filter_enabled:
+            handles.append(filtered_patch)
+        ax0.legend(handles=handles, loc="upper right", frameon=True)
+        ax0.set_title(
+            "Diode filter" if diode_filter_enabled else "Diode distribution"
+        )
+        ax0.set_xlabel("2BmMon Diode Intensity (J)")
+        ax0.set_ylabel("Counts")
+
+    # Pane 2
+    t_ps = getattr(run, "plt_filter_pre_timestamp", None)
+    if t_ps is None:
+        t_ps = getattr(run, "timestamp", None)
+    use_time = t_ps is not None and len(t_ps) == len(diode_pre)
+    if use_time:
+        t_s = t_ps.astype(float) * 1e-12
+        finite_t = np.isfinite(t_s)
+        if finite_t.any():
+            t_s = t_s - t_s[finite_t][0]
+        else:
+            use_time = False
+    if not use_time:
+        t_s = np.arange(len(diode_pre), dtype=float)
+    if diode_filter_enabled:
+        h_keep = ax1.scatter(
+            t_s[diode_keep],
+            diode_pre[diode_keep],
+            s=6,
+            alpha=0.6,
+            color="green",
+            label="Unfiltered Shots",
+        )
+        h_filt = ax1.scatter(
+            t_s[~diode_keep],
+            diode_pre[~diode_keep],
+            s=6,
+            alpha=0.6,
+            color="red",
+            label="Filtered Shots",
+        )
+        ax1.legend(handles=[h_keep, h_filt], loc="upper right", frameon=True)
+    else:
+        h_all = ax1.scatter(
+            t_s,
+            diode_pre,
+            s=6,
+            alpha=0.6,
+            color="green",
+            label="Unfiltered Shots",
+        )
+        ax1.legend(handles=[h_all], loc="upper right", frameon=True)
+
+    ax1.set_xlabel("Time (s)" if use_time else "Index")
+    ax1.set_ylabel("2BmMon Diode Intensity (J)")
+    sample = getattr(run, "sample_name", "unknown")
+    run_number = getattr(run, "run_number", "unknown")
+    ax1.set_title(f"sample = {sample}, run = {run_number}")
+
+    # Pane 3
+    if hasattr(run, "plt_filter_pre_time"):
+        time_pre = run.plt_filter_pre_time
+    else:
+        time_pre = (
+            run.time_jitter
+            if getattr(run, "time_jitter", None) is not None
+            else None
+        )
+    if time_pre is None:
+        ax2.set_axis_off()
+        ax2.text(
+            0.5,
+            0.5,
+            "No time_jitter available",
+            transform=ax2.transAxes,
+            ha="center",
+            va="center",
+        )
+        plt.close(fig)
+        return fig
+    if diode_filter_enabled and len(time_pre) == len(diode_keep):
+        time_to_plot = time_pre[diode_keep]
+    else:
+        time_to_plot = time_pre
+    time_to_plot = time_to_plot[np.isfinite(time_to_plot)]
+    if not time_to_plot.size:
+        ax2.set_axis_off()
+        ax2.text(
+            0.5,
+            0.5,
+            "No finite time_jitter values",
+            transform=ax2.transAxes,
+            ha="center",
+            va="center",
+        )
+        plt.close(fig)
+        return fig
+    _, time_edges = np.histogram(time_to_plot, bins=int(n_bins))
+    time_centers = 0.5 * (time_edges[:-1] + time_edges[1:])
+    _, _, time_patches = ax2.hist(
+        time_to_plot,
+        bins=time_edges,
+        edgecolor="black",
+        linewidth=0.8,
+    )
+    for patch in time_patches:
+        patch.set_facecolor("lightblue")
+    time_cutoff = getattr(run, "plt_filter_cutoff_time", None)
+    time_filter_applied = hasattr(run, "plt_filter_keep_time")
+    time_filter_applied = time_filter_applied and time_cutoff is not None
+    h_cut = None
+    if time_filter_applied:
+        cut_tt = float(time_cutoff)
+        for i, patch in enumerate(time_patches):
+            if float(time_centers[i]) > cut_tt:
+                patch.set_facecolor("red")
+        h_cut = ax2.axvline(
+            cut_tt,
+            linestyle="--",
+            color="red",
+            linewidth=1.2,
+            label=f"cut={cut_tt:.4g} ps",
+        )
+    t_mean = float(np.mean(time_to_plot))
+    t_median = float(np.median(time_to_plot))
+    if time_filter_applied:
+        thr_ps = f"{float(time_cutoff):.4g}"
+    else:
+        thr_ps = "None"
+    ax2.text(
+        0.01,
+        0.93,
+        (
+            f"threshold (ps): {thr_ps}\n"
+            f"mean (ps): {t_mean:.3f}\n"
+            f"median (ps): {t_median:.3f}"
+        ),
+        transform=ax2.transAxes,
+        ha="left",
+        va="top",
+        fontsize=10,
+        bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+    )
+    unfiltered_patch = Patch(
+        facecolor="lightblue",
+        edgecolor="black",
+        label="Unfiltered Shots",
+    )
+    filtered_patch = Patch(
+        facecolor="red",
+        edgecolor="black",
+        label="Filtered Shots",
+    )
+    legend_handles = [unfiltered_patch]
+    if time_filter_applied:
+        legend_handles.append(filtered_patch)
+        if h_cut is not None:
+            legend_handles.append(h_cut)
+    ax2.legend(handles=legend_handles, loc="upper right", frameon=True)
+    ax2.set_xlabel("Time Offset (ps)")
+    ax2.set_ylabel("Counts")
+    ax2.set_title(
+        "Time offset (filtered)" if time_filter_applied else "Time offset"
+    )
+
+    plt.close(fig)
+    return fig

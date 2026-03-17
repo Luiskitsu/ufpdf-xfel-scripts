@@ -61,7 +61,7 @@ class Run:
     r_max_fom : float
         The upper r bound for the G(r) figure of merit (default 5).
     q_min_morph : float
-        the lower Q bound for morph normalisation (default 0).
+        The lower Q bound for morph normalisation (default 0).
     q_max_morph : float
         The upper Q bound for morph normalisation (default 12).
     scale : float
@@ -77,7 +77,7 @@ class Run:
         The verbosity for debugging and assessing (default, False, is
         low verbosity).
     azimuthal_selector : str
-        The selection between vertical, horitzontal or total azimuthal
+        The selection between vertical, horizontal or total azimuthal
         integration.
     i0_percentile_threshold : float or None
         The percentile of i0 intensities to drop. A value of 5 will filter
@@ -91,28 +91,29 @@ class Run:
     Attributes
     ----------
     q : np.ndarray
-        Q-grid (1-D, shape (n_q,)).
+        The Q-grid (1-D, shape (n_q,)).
     delays : np.ndarray
-        Sorted unique delay times in ps (1-D, shape (n_delays,)).
+        The sorted unique delay times in ps (1-D, shape (n_delays,)).
     Is_on : np.ndarray
-        Delay-averaged, sorted pump-ON I(Q) (shape (n_delays, n_q)).
+        The delay-averaged, sorted pump-ON I(Q) (shape (n_delays, n_q)).
     Is_off : np.ndarray
-        Delay-averaged, sorted pump-OFF I(Q) (shape (n_delays, n_q)).
+        The delay-averaged, sorted pump-OFF I(Q) (shape (n_delays, n_q)).
     raw_delays : dict
-        Dict keyed by delay time containing raw [q, on, off, diff, ...] lists.
+        The dict keyed by delay time containing raw [q, on, off, diff, ...]
+        lists.
     morph_delays : dict
-        Dict keyed by delay time containing morphed [q, on, off,
+        The dict keyed by delay time containing morphed [q, on, off,
         diff, ...] lists.
     delay_scan : bool
-        True if the run contains a delay scan, False otherwise.
+        The flag indicating whether the run contains a delay scan.
     q_synchrotron : np.ndarray
-        Q-grid from the synchrotron reference file.
+        The Q-grid from the synchrotron reference file.
     fq_synchrotron : np.ndarray
-        F(Q) from the synchrotron reference file.
+        The F(Q) from the synchrotron reference file.
     target_delay_indices_off : list
-        List of pump-off delay indices used as the morph target
+        The list of pump-off delay indices used as the morph target
     target_delay_indices_on : list
-        List of pump-on delay indices used as the morph target
+        The list of pump-on delay indices used as the morph target
     """
 
     # ------------------------------------------------------------------
@@ -172,8 +173,14 @@ class Run:
         self.azimuthal_selector = azimuthal_selector
 
         # --- store setup parameters ---
-        self.target_delay_indices_off = target_delay_indices_off
-        self.target_delay_indices_on = target_delay_indices_on
+        self.target_delay_indices_off = (
+            [0]
+            if target_delay_indices_off is None
+            else target_delay_indices_off
+        )
+        self.target_delay_indices_on = (
+            [] if target_delay_indices_on is None else target_delay_indices_on
+        )
         self.q_min = q_min
         self.q_max = q_max
         self.pdf_rmin = pdf_rmin
@@ -263,34 +270,17 @@ class Run:
 
     def _build_target_table(self):
         """Construct morph target by averaging selected delays."""
-        allowed_delays = list(self.raw_delays.keys())
-        # off indices
-        if self.target_delay_indices_off is None:
-            off_target_indices = [0]
-        else:
-            off_target_indices = self.target_delay_indices_off
-        # on indices
-        if self.target_delay_indices_on is None:
-            on_target_indices = []
-        else:
-            on_target_indices = self.target_delay_indices_on
-        max_index = len(allowed_delays) - 1
-        for index in off_target_indices + on_target_indices:
-            if index < 0 or index > max_index:
-                raise ValueError(
-                    f"Invalid target delay index {index}"
-                    f"Valid index range is 0 to {max_index}"
-                )
-        # warn if on delays ≥ 0 ps are used in morph target
+        allowed_delays = list(self.raw_delays)
+        off_target_indices = self.target_delay_indices_off
+        on_target_indices = self.target_delay_indices_on
         on_selected_delays = [allowed_delays[idx] for idx in on_target_indices]
         positive_on_delays = [
             delay for delay in on_selected_delays if delay >= 0
         ]
-        if len(positive_on_delays) > 0:
+        if positive_on_delays:
             print(
-                "WARNING: ON list used in morph target include delays ≥ 0 ps "
-                f"({positive_on_delays}). These may contain pump-induced "
-                "changes and bias the morph target."
+                f"WARNING: On delays {positive_on_delays} are at time ≥ 0 ps "
+                f"Check that this is intended behavior"
             )
         q_target = self.raw_delays[allowed_delays[0]][0]
         y_target = []

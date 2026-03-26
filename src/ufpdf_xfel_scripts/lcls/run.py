@@ -61,7 +61,7 @@ class Run:
     r_max_fom : float
         The upper r bound for the G(r) figure of merit (default 5).
     q_min_morph : float
-        the lower Q bound for morph normalisation (default 0).
+        The lower Q bound for morph normalisation (default 0).
     q_max_morph : float
         The upper Q bound for morph normalisation (default 12).
     scale : float
@@ -77,7 +77,7 @@ class Run:
         The verbosity for debugging and assessing (default, False, is
         low verbosity).
     azimuthal_selector : str
-        The selection between vertical, horitzontal or total azimuthal
+        The selection between vertical, horizontal or total azimuthal
         integration.
     i0_percentile_threshold : float or None
         The percentile of i0 intensities to drop. A value of 5 will filter
@@ -91,26 +91,29 @@ class Run:
     Attributes
     ----------
     q : np.ndarray
-        Q-grid (1-D, shape (n_q,)).
+        The Q-grid (1-D, shape (n_q,)).
     delays : np.ndarray
-        Sorted unique delay times in ps (1-D, shape (n_delays,)).
+        The sorted unique delay times in ps (1-D, shape (n_delays,)).
     Is_on : np.ndarray
-        Delay-averaged, sorted pump-ON I(Q) (shape (n_delays, n_q)).
+        The delay-averaged, sorted pump-ON I(Q) (shape (n_delays, n_q)).
     Is_off : np.ndarray
-        Delay-averaged, sorted pump-OFF I(Q) (shape (n_delays, n_q)).
-    target_delay : float
-        The delay value used as the morph target.
+        The delay-averaged, sorted pump-OFF I(Q) (shape (n_delays, n_q)).
     raw_delays : dict
-        Dict keyed by delay time containing raw [q, on, off, diff, ...] lists.
+        The dict keyed by delay time containing raw [q, on, off, diff, ...]
+        lists.
     morph_delays : dict
-        Dict keyed by delay time containing morphed [q, on, off,
+        The dict keyed by delay time containing morphed [q, on, off,
         diff, ...] lists.
     delay_scan : bool
-        True if the run contains a delay scan, False otherwise.
+        The flag indicating whether the run contains a delay scan.
     q_synchrotron : np.ndarray
-        Q-grid from the synchrotron reference file.
+        The Q-grid from the synchrotron reference file.
     fq_synchrotron : np.ndarray
-        F(Q) from the synchrotron reference file.
+        The F(Q) from the synchrotron reference file.
+    target_delay_indices_off : list
+        The list of pump-off delay indices used as the morph target
+    target_delay_indices_on : list
+        The list of pump-on delay indices used as the morph target
     """
 
     # ------------------------------------------------------------------
@@ -126,7 +129,8 @@ class Run:
         instrument,
         experiment_number,
         number_of_static_samples=11,
-        target_id=0,
+        target_delay_indices_off=None,
+        target_delay_indices_on=None,
         q_min=9,
         q_max=9.5,
         r_min_fom=2,
@@ -169,7 +173,14 @@ class Run:
         self.azimuthal_selector = azimuthal_selector
 
         # --- store setup parameters ---
-        self.target_id = target_id
+        self.target_delay_indices_off = (
+            [0]
+            if target_delay_indices_off is None
+            else target_delay_indices_off
+        )
+        self.target_delay_indices_on = (
+            [] if target_delay_indices_on is None else target_delay_indices_on
+        )
         self.q_min = q_min
         self.q_max = q_max
         self.pdf_rmin = pdf_rmin
@@ -249,6 +260,40 @@ class Run:
         integrand = fq[:, None] * np.sin(qr)
         gr = (2 / np.pi) * np.trapezoid(integrand, q, axis=0)
         return r, gr
+
+    def _print_delay_table(self):
+        """Print table mapping delay index to delay value."""
+        print("\nDelay index table")
+        print("-----------------")
+        for index, delay in enumerate(self.unique_delays):
+            print(f"{index:3d}  ->  {delay:8.3f} ps")
+
+    def _build_target_table(self):
+        """Construct morph target by averaging selected delays."""
+        allowed_delays = list(self.raw_delays)
+        off_target_indices = self.target_delay_indices_off
+        on_target_indices = self.target_delay_indices_on
+        on_selected_delays = [allowed_delays[idx] for idx in on_target_indices]
+        positive_on_delays = [
+            delay for delay in on_selected_delays if delay >= 0
+        ]
+        if positive_on_delays:
+            print(
+                f"WARNING: On delays {positive_on_delays} are at time ≥ 0 ps "
+                f"Check that this is intended behavior"
+            )
+        q_target = self.raw_delays[allowed_delays[0]][0]
+        y_target = []
+        for index in off_target_indices:
+            delay = allowed_delays[index]
+            y_target.append(self.raw_delays[delay][2])  # OFF signal
+        for index in on_target_indices:
+            delay = allowed_delays[index]
+            y_target.append(self.raw_delays[delay][1])  # ON signal
+        y_target_average = np.nanmean(y_target, axis=0)
+        self.target_q = q_target
+        self.target_off = y_target_average
+        return np.column_stack([q_target, y_target_average])
 
     def _average_equal_times(self):
         # average repeated delays
@@ -330,10 +375,8 @@ class Run:
             )
 
     def _morph_fq(self):
-        reference_delay = self.delays[self.target_id]
-
-        x_morph = self.morphed_delay_scans[reference_delay][0]
-        y_morph = self.morphed_delay_scans[reference_delay][2]
+        x_morph = self.target_q
+        y_morph = self.target_off
         x_target = self.q_synchrotron
         y_target = self.fq_synchrotron
 
@@ -511,10 +554,8 @@ class Run:
             )  # true if scan exists in the dataset, false otherwise
             if self.delay_scan:
                 delays = f["scan"][self.delay_motor][:].squeeze() * 1e12
-                self.target_delay = delays[self.target_id]
             else:
                 delays = None  # filled below
-                self.target_delay = None
 
             laser_mask = f["lightStatus"]["laser"][:].astype(bool)
             xray_mask = f["lightStatus"]["xray"][:].astype(bool)
@@ -644,14 +685,13 @@ class Run:
             ) = self._sample_evenly(self.delays, self.number_of_static_samples)
         else:
             self._average_equal_times()
+            self._print_delay_table()
 
     def _morph(self):
         """Apply diffpy.morph to each delay and store results in
         morph_delays."""
         params = self.morph_params
-        target = self.raw_delays[self.target_delay]
-        target_table = np.column_stack([target[0], target[1]])
-
+        target_table = self._build_target_table()
         self.morph_parameters = {}
         self.morphed_delay_scans = {}
         for delay_t, data in self.raw_delays.items():

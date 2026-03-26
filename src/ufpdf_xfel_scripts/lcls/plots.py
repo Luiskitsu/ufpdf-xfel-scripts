@@ -563,22 +563,24 @@ def plot_time_resolved_window_map(
 
         FOM_map[:, i_c] = values
 
-    with mpl.rc_context({"image.cmap": "bwr"}):
-        fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(9, 6))
 
-        extent = [
-            centers[0],
-            centers[-1],
-            delay_times[0],
-            delay_times[-1],
-        ]
+    X, Y = np.meshgrid(centers, delay_times)
 
-        im = ax.imshow(
-            FOM_map,
-            aspect="auto",
-            extent=extent,
-            origin="lower",
-        )
+    im = ax.pcolormesh(
+        X,
+        Y,
+        FOM_map,
+        shading="auto",
+        cmap="viridis",
+    )
+
+    ax.set_xlabel(axis_label)
+    ax.set_ylabel("Delay (ps)")
+    ax.set_title(
+        f"{data_label} time-resolved window map\n"
+        f"metric={metric}, width={width}, run={run.run_number}"
+    )
 
         ax.set_xlabel(axis_label)
         ax.set_ylabel("Delay (ps)")

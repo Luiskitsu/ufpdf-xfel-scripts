@@ -219,7 +219,7 @@ class Run:
         self._morph()
         try:
             self._transform()
-        except SystemExit:
+        except ValueError:
             print(
                 "WARNING: the refinement failed, please re-run using other "
                 "fit_qmax and getter_config"

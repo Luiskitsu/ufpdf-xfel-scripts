@@ -582,16 +582,16 @@ def plot_time_resolved_window_map(
         f"metric={metric}, width={width}, run={run.run_number}"
     )
 
-        ax.set_xlabel(axis_label)
-        ax.set_ylabel("Delay (ps)")
-        ax.set_title(
-            f"{data_label} time-resolved window map\n"
-            f"metric={metric}, width={width}, run={run.run_number}"
-        )
+    ax.set_xlabel(axis_label)
+    ax.set_ylabel("Delay (ps)")
+    ax.set_title(
+        f"{data_label} time-resolved window map\n"
+        f"metric={metric}, width={width}, run={run.run_number}"
+    )
 
-        plt.colorbar(im, ax=ax, label=metric)
-        plt.tight_layout()
-        plt.show()
+    plt.colorbar(im, ax=ax, label=metric)
+    plt.tight_layout()
+    plt.show()
 
 
 def plot_morph_parameters(
